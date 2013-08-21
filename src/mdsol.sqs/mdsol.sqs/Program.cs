@@ -46,6 +46,7 @@ namespace mdsol.sqs
                 new DeleteMessageRequest();
 
             recieveMessageRequest.QueueUrl = queueUrl;
+            recieveMessageRequest.VisibilityTimeout = 3600;
             deleteMessageRequest.QueueUrl = queueUrl;
 
             while (true)
@@ -66,7 +67,7 @@ namespace mdsol.sqs
                 {
                     WriteToFile(m, dir);
                     deleteRequest.ReceiptHandle = m.ReceiptHandle;
-                    client.DeleteMessage(deleteRequest);
+//                    client.DeleteMessage(deleteRequest);
                     Console.WriteLine("Processed: " + m.MessageId);
                 }
                 );
@@ -80,7 +81,7 @@ namespace mdsol.sqs
 
         static void WriteToFile(Message message, string dir)
         {
-            System.IO.File.WriteAllText(Path.Combine(dir, message.MessageId), message.Body);
+            System.IO.File.WriteAllText(Path.Combine(dir, message.MessageId + ".txt"), message.Body);
         }
     }
 }
