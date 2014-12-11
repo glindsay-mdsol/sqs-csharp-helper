@@ -93,7 +93,6 @@ namespace mdsol.sqs
 
             var queueUrl = queuesResult.QueueUrls.First();
 
-            //TODO: we need to figure out how to accept entry for the base directory
             var dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sqs-messages", DateTime.Now.ToString("yyyyMMdd"));
 
             Console.WriteLine("Base output directory {0}", dir);
@@ -105,7 +104,6 @@ namespace mdsol.sqs
             catch (Exception ex)
             {
                 Console.WriteLine("Unhandled exception from Read: {0}", ex);
-                return;
             }
         }
 
@@ -115,7 +113,6 @@ namespace mdsol.sqs
                 new ReceiveMessageRequest
                 {
                     QueueUrl = queueUrl,
-                    //TODO: FIGURE OUT set this really low
                     VisibilityTimeout = 30
                 };
 
@@ -148,156 +145,54 @@ namespace mdsol.sqs
             if (!Directory.Exists(badDir)) Directory.CreateDirectory(badDir);
             if (!Directory.Exists(doneDir)) Directory.CreateDirectory(doneDir);
 
-            var parseCancelToken = new CancellationTokenSource();
-            var parseToken = parseCancelToken.Token;
+            #region Download
+            //TODO: we need this!
+            var numberDownloadedLastIteration = 0;
+            var numberRemaining = 0;
 
-            var uploadCancelToken = new CancellationTokenSource();
-            var uploadToken = uploadCancelToken.Token;
-
-            var fetchCancelToken = new CancellationTokenSource();
-            var fetchToken = fetchCancelToken.Token;
-
-            var messageParseTask = Task.Factory.StartNew(() =>
+            while (_processedMessageIds.Count < numberOfMessagesToProcess)
             {
-                Thread.Sleep(1000);
-                Console.WriteLine("\nSheeeeeeeeeet");
-                throw new Exception("fuck");
-
-                try
-                {
-                    Console.WriteLine("Started parsing...");
-
-                    var parseMessageCount = Directory
-                        .GetFiles(parseDir)
-                        .Count();
-
-                    while (parseMessageCount > 0 || !parseToken.IsCancellationRequested)
-                    {
-                        Console.Write("<");
-
-                        var files = Directory
-                            .EnumerateFiles(parseDir)
-                            .ToList();
-
-                        foreach (var file in files)
-                        {
-                            ParseAFile(file, goodDir, badDir);
-
-                            if (parseToken.IsCancellationRequested) return;
-                        }
-
-                        parseMessageCount = Directory
-                            .GetFiles(parseDir)
-                            .Count();
-                    }
-
-                    Console.WriteLine("Done parsing messages.");
-                    uploadCancelToken.Cancel();
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Problem in parse task {0}", ex);
-                    throw new Exception("Problem in parse task.", ex);
-                }
-            });
-
-            var messageUploadTask = Task.Factory.StartNew(() =>
-            {
-                while (!uploadToken.IsCancellationRequested)
-                {
-                    Console.WriteLine("-u-");
-                }
-
-                return;
-
-                try
-                {
-                    Console.WriteLine("Started uploading...");
-
-                    var uploadMessageCount = Directory
-                        .GetFiles(goodDir)
-                        .Count();
-
-                    while (uploadMessageCount > 0 || !uploadToken.IsCancellationRequested)
-                    {
-                        Console.Write(">");
-
-                        var files = Directory
-                            .EnumerateFiles(goodDir)
-                            .ToList();
-
-                        foreach (var file in files)
-                        {
-                            UploadAFile(file, doneDir, queueUrl);
-
-                            if (uploadToken.IsCancellationRequested) return;
-                        }
-
-
-                        uploadMessageCount = Directory
-                            .GetFiles(dir)
-                            .Count();
-                    }
-
-                    Console.WriteLine("Done uploading messages.");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Problem in upload task {0}", ex);
-                    throw new Exception("Problem in upload task.", ex);
-                }
-            });
-
-            //TODO: should we have a maximum time window?
-            //TODO: this should be in a task as well, so we can get agg exceptions immediately
-            var fetchTask = Task.Factory.StartNew(() =>
-            {
-                while (!fetchToken.IsCancellationRequested)
-                {
-                    Console.WriteLine("-f-");
-                }
-
-                return;
-
-                while (_processedMessageIds.Count < numberOfMessagesToProcess && !fetchToken.IsCancellationRequested)
-                {
-                    ReadMessages(client, receiveMessageRequest, deleteMessageRequest, dir, parseDir);
-                }
-
-                parseCancelToken.Cancel();
-            });
-
-            try
-            {
-                //worked
-                //Task.WaitAll(messageParseTask);
-
-                Task.WaitAll(new Task[] { messageParseTask, fetchTask, messageUploadTask });
-
-//                Task.WaitAll(messageParseTask, fetchTask, messageUploadTask);
+                numberDownloadedLastIteration = ReadMessages(client, receiveMessageRequest, deleteMessageRequest, dir, parseDir);
             }
-            catch (AggregateException ae)
-            {
-                Console.WriteLine("Aggregate exception!");
+            #endregion
 
-                ae.InnerExceptions.ToList().ForEach(Console.WriteLine);
+            #region Parse
+            Directory
+                .EnumerateFiles(parseDir)
+                .ToList()
+                .ForEach(file =>
+                {
+                    ParseAFile(file, goodDir, badDir);
+                    Console.Write("<");
+                });
 
-                fetchCancelToken.Cancel();
-                uploadCancelToken.Cancel();
-                parseCancelToken.Cancel();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("WHERE'S MY AGGREGATE!!!!!!!!");
-            }
+            Console.WriteLine("Done parsing messages.");
+            #endregion
+
+            #region Upload
+            Console.WriteLine("Started uploading...");
+
+            Directory
+                .EnumerateFiles(goodDir)
+                .ToList()
+                .ForEach(file =>
+                {
+                    UploadAFile(file, doneDir, queueUrl);
+                    Console.Write(">");
+                });
+
+            Console.WriteLine("Done uploading messages.");
+            #endregion
 
             Console.WriteLine("Done, exiting.");
         }
 
-        static void ReadMessages(AmazonSQSClient client, ReceiveMessageRequest request, DeleteMessageRequest deleteRequest, string sourceDir, string targetDir)
+        static int ReadMessages(AmazonSQSClient client, ReceiveMessageRequest request, DeleteMessageRequest deleteRequest, string sourceDir, string targetDir)
         {
             var result = client.ReceiveMessage(request);
-            if (result.Messages.Count != 0)
+            var messageCount = result.Messages.Count;
+
+            if (messageCount != 0)
             {
                 result.Messages.ForEach(m =>
                 {
@@ -330,6 +225,7 @@ namespace mdsol.sqs
                 Console.WriteLine("No Messages");
             }
             Thread.Sleep(200);
+            return messageCount;
         }
 
         private static void ParseAFile(string sourceFilePath, string goodDirectoryPath, string badDirectoryPath)
@@ -353,13 +249,28 @@ namespace mdsol.sqs
             //func to check for messages that are for bad studies...naughty studies.
             Func<dynamic, bool> checkStudy = (msg) =>
             {
-                var studyUuidForMessage = messageJson.data.study.uuid.ToString();
+                try
+                {
+                    var raw = messageJson.data.study;
 
-                return studyUuidsForBadStudies.Contains(studyUuidForMessage);
+                    if (raw == null) return false;
+
+                    var studyUuidForMessage = messageJson.data.study.uuid.ToString();
+
+                    return studyUuidsForBadStudies.Contains(studyUuidForMessage);
+                }
+                catch (Exception ex)
+                {
+                    return false;
+                }
             };
 
             Func<dynamic, bool> checkDuplicateAssignments = (msg) =>
             {
+                try
+                {
+                    
+                
                 //TODO: fuck, what if the file is still being downloaded? Probably ignore it and just try the next file.
                 //these are the module types that don't allow multiple assignments
                 var roleTypesYo = new List<string> { "AP", "AGL", "SGMP", "SGMG" };
@@ -383,6 +294,11 @@ namespace mdsol.sqs
                     .GroupBy(x => x)
                     //if we have any w/ multiples, go bang
                     .Any(grp => grp.Count() > 1);
+                }
+                catch (Exception ex)
+                {
+                    return false;
+                }
             };
 
             var hasBadStudies = checkStudy(messageJson);
